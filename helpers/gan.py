@@ -29,7 +29,7 @@ def sample_noise(batch_size, dim, seed=None):
     if seed is not None:
         torch.manual_seed(seed)
         
-    tensor = torch.rand(batch_size, dim, 3) *2 - 1
+    tensor = torch.rand(batch_size, dim) *2 - 1
     
     return tensor
 
@@ -124,13 +124,13 @@ def build_dc_classifier(batch_size):
             nn.Conv2d(3, 32 , (5, 5), stride=1),
             nn.LeakyReLU(0.01),
             nn.MaxPool2d((2, 2), stride=2),
-            nn.Conv2d(32, 64, (5, 5), stride=1),
+            nn.Conv2d(32, 10, (3, 3), stride=1),
             nn.LeakyReLU(0.01),
-            nn.MaxPool2d((2, 2), stride=2),
+            nn.MaxPool2d((2, 2), stride=1),
             Flatten(),
-            nn.Linear(1024, 1024),
+            nn.Linear(7290, 7290),
             nn.LeakyReLU(0.01),
-            nn.Linear(1024, 1),
+            nn.Linear(7290, 1),
         )
     
     return model
@@ -147,20 +147,31 @@ def build_dc_generator(noise_dim=NOISE_DIM):
     """
 
     model = nn.Sequential(
-            nn.Linear(noise_dim, 1024),
-            nn.ReLU(),
-            nn.BatchNorm1d(1024),
-            nn.Linear(1024, 6272),
-            nn.ReLU(),
-            nn.BatchNorm1d(6272),
-            Unflatten(),
-            nn.ConvTranspose2d(128, 64, (4, 4), stride=2, padding=1),
-            nn.ReLU(),
+#             nn.Linear(noise_dim, 1024),
+#             nn.ReLU(),
+#             nn.BatchNorm1d(1024),
+#             nn.Linear(1024, 16384),
+#             nn.ReLU(),
+#             nn.BatchNorm1d(16384),
+#             Unflatten(),
+            nn.ConvTranspose2d(256, 512, 4, 1, 0, bias=False),
+            nn.BatchNorm2d(512),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(512, 256, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(256, 128, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(128, 64, 4, 2, 1, bias=False),
             nn.BatchNorm2d(64),
-            nn.ConvTranspose2d(64, 3, (4, 4), stride=2, padding=1),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(64, 3, 4, 2, 1, bias=False),
             nn.Tanh(),
             Flatten()
         )
+    
+#     print(model)
     
     return model
 
@@ -183,27 +194,26 @@ def run_a_gan(D, G, D_solver, G_solver, discriminator_loss, generator_loss, load
     images = []
     iter_count = 0
     for epoch in range(num_epochs):
-        for x, _ in loader_train:
+        for x in loader_train:
             if len(x) != batch_size:
                 continue
             D_solver.zero_grad()
             real_data = x.type(dtype)
-#             print(real_data, real_data.shape)
             logits_real = D(2* (real_data - 0.5)).type(dtype)
 
-            g_fake_seed = sample_noise(batch_size, noise_size).type(dtype)
+            g_fake_seed = torch.randn(batch_size, 256, 1, 1).type(dtype)
             fake_images = G(g_fake_seed).detach()
-            logits_fake = D(fake_images.view(batch_size, 1, 28, 28))
+            logits_fake = D(fake_images.view(batch_size, 3, 64, 64))
 
             d_total_error = discriminator_loss(logits_real, logits_fake)
             d_total_error.backward()        
             D_solver.step()
 
             G_solver.zero_grad()
-            g_fake_seed = sample_noise(batch_size, noise_size).type(dtype)
+            g_fake_seed = torch.randn(batch_size, 256, 1, 1).type(dtype)
             fake_images = G(g_fake_seed)
 
-            gen_logits_fake = D(fake_images.view(batch_size, 1, 28, 28))
+            gen_logits_fake = D(fake_images.view(batch_size, 3, 64, 64))
             g_error = generator_loss(gen_logits_fake)
             g_error.backward()
             G_solver.step()
@@ -246,13 +256,14 @@ class Unflatten(nn.Module):
     An Unflatten module receives an input of shape (N, C*H*W) and reshapes it
     to produce an output of shape (N, C, H, W).
     """
-    def __init__(self, N=-1, C=128, H=7, W=7):
+    def __init__(self, N=-1, C=256, H=8, W=8):
         super(Unflatten, self).__init__()
         self.N = N
         self.C = C
         self.H = H
         self.W = W
     def forward(self, x):
+#         print(x.shape)
         return x.view(self.N, self.C, self.H, self.W)
 
 def initialize_weights(m):
