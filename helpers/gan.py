@@ -108,7 +108,7 @@ def get_optimizer(model):
     optimizer = None
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     
-    optimizer = optim.Adam(model.parameters(), lr=0.001, betas=(0.5, 0.999))
+    optimizer = optim.Adam(model.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     return optimizer
@@ -121,16 +121,20 @@ def build_dc_classifier(batch_size):
 
     model = nn.Sequential(
             Unflatten(batch_size, 3, 64, 64),
-            nn.Conv2d(3, 32 , (5, 5), stride=1),
-            nn.LeakyReLU(0.01),
-            nn.MaxPool2d((2, 2), stride=2),
-            nn.Conv2d(32, 10, (3, 3), stride=1),
-            nn.LeakyReLU(0.01),
-            nn.MaxPool2d((2, 2), stride=1),
+            nn.Conv2d(3, 64, 4, 2, 1),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(64, 128, 4, 2, 1),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(128, 256, 4, 2, 1),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(256, 512, 4, 2, 1),
+            nn.BatchNorm2d(512),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(512, 1, 4, 1, 0),
+            nn.Sigmoid(),
             Flatten(),
-            nn.Linear(7290, 7290),
-            nn.LeakyReLU(0.01),
-            nn.Linear(7290, 1),
         )
     
     return model
@@ -175,7 +179,7 @@ def build_dc_generator(noise_dim=NOISE_DIM):
     
     return model
 
-def run_a_gan(D, G, D_solver, G_solver, discriminator_loss, generator_loss, loader_train, show_every=250, 
+def run_a_gan(D, G, D_solver, G_solver, discriminator_loss, generator_loss, loader_train, show_every=100, 
               batch_size=128, noise_size=96, num_epochs=10):
     """
     Train a GAN!
@@ -268,7 +272,7 @@ class Unflatten(nn.Module):
 
 def initialize_weights(m):
     if isinstance(m, nn.Linear) or isinstance(m, nn.ConvTranspose2d):
-        nn.init.xavier_uniform_(m.weight.data)
+        nn.init.normal_(m.weight.data, 0.0, 0.02)
 
 def preprocess_img(x):
     return 2 * x - 1.0
