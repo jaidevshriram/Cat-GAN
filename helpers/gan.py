@@ -9,10 +9,15 @@ from torch.utils.data import sampler
 
 import PIL
 
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+
 NOISE_DIM = 96
 
 # dtype = torch.FloatTensor
 dtype = torch.cuda.FloatTensor ## UNCOMMENT THIS LINE IF YOU'RE ON A GPU!
+device = torch.device("cuda:0")
+
 
 def sample_noise(batch_size, dim, seed=None):
     """
@@ -29,7 +34,7 @@ def sample_noise(batch_size, dim, seed=None):
     if seed is not None:
         torch.manual_seed(seed)
         
-    tensor = torch.rand(batch_size, dim) *2 - 1
+    tensor = torch.randn(batch_size, dim, 1, 1, device = device)
     
     return tensor
 
@@ -94,7 +99,7 @@ def generator_loss(logits_fake):
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     return loss
 
-def get_optimizer(model):
+def get_optimizer(model, lr=0.0002):
     """
     Construct and return an Adam optimizer for the model with learning rate 1e-3,
     beta1=0.5, and beta2=0.999.
@@ -108,7 +113,7 @@ def get_optimizer(model):
     optimizer = None
     # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     
-    optimizer = optim.Adam(model.parameters(), lr=0.0002, betas=(0.5, 0.999))
+    optimizer = optim.Adam(model.parameters(), lr=lr, betas=(0.5, 0.999))
 
     # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     return optimizer
@@ -120,21 +125,19 @@ def build_dc_classifier(batch_size):
     """
 
     model = nn.Sequential(
-            Unflatten(batch_size, 3, 64, 64),
-            nn.Conv2d(3, 64, 4, 2, 1),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(64, 128, 4, 2, 1),
+            nn.Conv2d(3, 64, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(64, 128, 4, 2, 1, bias=False),
             nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(128, 256, 4, 2, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(128, 256, 4, 2, 1, bias=False),
             nn.BatchNorm2d(256),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(256, 512, 4, 2, 1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(256, 512, 4, 2, 1, bias=False),
             nn.BatchNorm2d(512),
-            nn.LeakyReLU(0.2),
-            nn.Conv2d(512, 1, 4, 1, 0),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(512, 1, 4, 1, 0, bias=False),
             nn.Sigmoid(),
-            Flatten(),
         )
     
     return model
@@ -151,14 +154,7 @@ def build_dc_generator(noise_dim=NOISE_DIM):
     """
 
     model = nn.Sequential(
-#             nn.Linear(noise_dim, 1024),
-#             nn.ReLU(),
-#             nn.BatchNorm1d(1024),
-#             nn.Linear(1024, 16384),
-#             nn.ReLU(),
-#             nn.BatchNorm1d(16384),
-#             Unflatten(),
-            nn.ConvTranspose2d(256, 512, 4, 1, 0, bias=False),
+            nn.ConvTranspose2d(noise_dim, 512, 4, 1, 0, bias=False),
             nn.BatchNorm2d(512),
             nn.ReLU(True),
             nn.ConvTranspose2d(512, 256, 4, 2, 1, bias=False),
@@ -172,14 +168,13 @@ def build_dc_generator(noise_dim=NOISE_DIM):
             nn.ReLU(True),
             nn.ConvTranspose2d(64, 3, 4, 2, 1, bias=False),
             nn.Tanh(),
-            Flatten()
         )
     
 #     print(model)
     
     return model
 
-def run_a_gan(D, G, D_solver, G_solver, discriminator_loss, generator_loss, loader_train, show_every=100, 
+def run_a_gan(D, G, D_solver, G_solver, discriminator_loss, generator_loss, loader_train, show_every=50, 
               batch_size=128, noise_size=96, num_epochs=10):
     """
     Train a GAN!
@@ -197,39 +192,81 @@ def run_a_gan(D, G, D_solver, G_solver, discriminator_loss, generator_loss, load
     """
     images = []
     iter_count = 0
+    
+    D_losses = []
+    G_losses = []
+    
+    fixed_noise = torch.randn(64, noise_size, 1, 1, device=device)
+    
     for epoch in range(num_epochs):
-        for x in loader_train:
+        for i, x in enumerate(loader_train, 0):
             if len(x) != batch_size:
                 continue
-            D_solver.zero_grad()
-            real_data = x.type(dtype)
-            logits_real = D(2* (real_data - 0.5)).type(dtype)
+            
+            # Establish convention for real and fake labels during training
+            real_label = 1.
+            fake_label = 0. 
+            smooth  = 0.1
+            
+            # Train discriminator with real images
+            D.zero_grad()
 
-            g_fake_seed = torch.randn(batch_size, 256, 1, 1).type(dtype)
-            fake_images = G(g_fake_seed).detach()
-            logits_fake = D(fake_images.view(batch_size, 3, 64, 64))
-
-            d_total_error = discriminator_loss(logits_real, logits_fake)
-            d_total_error.backward()        
+            real_cpu = x.to(device).type(dtype)
+            b_size = real_cpu.size(0)
+            label = torch.full((batch_size,), real_label, dtype=torch.float, device=device) * (1-smooth)
+            
+            output_real = D(real_cpu).view(-1)
+            error_real = nn.BCELoss()(output_real, label)
+            error_real.backward()
+            D_x = output_real.mean().item()
+            
+            # Train discriminator with fake images
+            
+            noise = sample_noise(batch_size, noise_size)
+            fake = G(noise)
+            label.fill_(fake_label  * (1-smooth))
+            output_fake = D(fake.detach()).view(-1)
+            
+            error_fake = nn.BCELoss()(output_fake, label)
+            error_fake.backward()
+            D_G_1 = error_fake.mean().item
+            
+            errorD = error_real + error_fake
             D_solver.step()
-
-            G_solver.zero_grad()
-            g_fake_seed = torch.randn(batch_size, 256, 1, 1).type(dtype)
-            fake_images = G(g_fake_seed)
-
-            gen_logits_fake = D(fake_images.view(batch_size, 3, 64, 64))
-            g_error = generator_loss(gen_logits_fake)
-            g_error.backward()
-            G_solver.step()
+            
+            # Train GAN
+            
+            D.zero_grad()
+            label.fill_(real_label)
+            output_g = D(fake).view(-1)
+            errorG = nn.BCELoss()(output_g, label)
+            errorG.backward()
+            D_G_2 = errorG.mean().item()
+            G_solver.step()            
+            
+            
 
             if (iter_count % show_every == 0):
-                print('Iter: {}, D: {:.4}, G:{:.4}'.format(iter_count,d_total_error.item(),g_error.item()))
-                imgs_numpy = fake_images.data.cpu().numpy()
+                print('Iter: {}, D: {:.4}, G:{:.4}'.format(iter_count,errorD.item(),errorG.item()))
+                imgs_numpy = G(fixed_noise).detach().cpu().numpy()
                 images.append(imgs_numpy[0:16])
+                
+#                 sqrtn = int(np.ceil(np.sqrt(imgs_numpy[0].shape[0])))
+#                 sqrtimg = int(np.ceil(np.sqrt(imgs_numpy[0].shape[1])))
+              
+#                 img = imgs_numpy[0].reshape(3, 64, 64)
+#                 img = np.moveaxis(img, 0, -1)
+                
+#                 plt.imshow(img)
+#                 plt.show()
 
             iter_count += 1
+                        
+            G_losses.append(errorG.item())
+            D_losses.append(errorD.item())
+
     
-    return images
+    return images, G_losses, D_losses
 
 
 
@@ -272,7 +309,10 @@ class Unflatten(nn.Module):
 
 def initialize_weights(m):
     if isinstance(m, nn.Linear) or isinstance(m, nn.ConvTranspose2d):
-        nn.init.normal_(m.weight.data, 0.0, 0.02)
+        nn.init.normal_(m.weight.data, 1.0, 0.02)
+#         nn.init.constant_(m.bias.data, 0)
+    elif isinstance(m, nn.Conv2d):
+        nn.init.normal_(m.weight.data, 0.0, 0.02) 
 
 def preprocess_img(x):
     return 2 * x - 1.0

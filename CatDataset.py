@@ -27,6 +27,7 @@ class CatDataset(Dataset):
             idx = idx.tolist()
                      
         image = io.imread(str(self.root_dir) + "/" + str(idx) + ".jpg")
+        image = np.moveaxis(image, -1, 0)
         
         return image
         
