@@ -1,0 +1,28 @@
+wandb_version: 1
+
+NOISE_DIM:
+  desc: null
+  value: 100
+NUM_TRAIN:
+  desc: null
+  value: 12800
+NUM_VAL:
+  desc: null
+  value: 3000
+_wandb:
+  desc: null
+  value:
+    cli_version: 0.10.4
+    framework: torch
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    python_version: 3.8.3
+batch_size:
+  desc: null
+  value: 128
+epochs:
+  desc: null
+  value: 50
+test_batch_size:
+  desc: null
+  value: 10

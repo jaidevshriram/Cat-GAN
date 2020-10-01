@@ -6,11 +6,15 @@ import torchvision
 import torchvision.transforms as T
 import torch.optim as optim
 from torch.utils.data import sampler
+import torchvision.utils as vutils
 
 import PIL
 
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+import wandb
+
+from .grad_flow import plot_grad_flow
 
 NOISE_DIM = 96
 
@@ -18,111 +22,35 @@ NOISE_DIM = 96
 dtype = torch.cuda.FloatTensor ## UNCOMMENT THIS LINE IF YOU'RE ON A GPU!
 device = torch.device("cuda:0")
 
+class UnNormalize(object):
+    def __init__(self, mean, std):
+        self.mean = mean
+        self.std = std
+
+    def __call__(self, tensor):
+        """
+        Args:
+            tensor (Tensor): Tensor image of size (C, H, W) to be normalized.
+        Returns:
+            Tensor: Normalized image.
+        """
+        for t, m, s in zip(tensor, self.mean, self.std):
+            t.mul_(s).add_(m)
+            # The normalize code -> t.sub_(m).div_(s)
+        return tensor
 
 def sample_noise(batch_size, dim, seed=None):
-    """
-    Generate a PyTorch Tensor of uniform random noise.
-
-    Input: 
-    - batch_size: Integer giving the batch size of noise to generate.
-    - dim: Integer giving the dimension of noise to generate.
-    
-    Output:
-    - A PyTorch Tensor of shape (batch_size, dim) containing uniform
-      random noise in the range (-1, 1).
-    """
     if seed is not None:
         torch.manual_seed(seed)
         
     tensor = torch.randn(batch_size, dim, 1, 1, device = device)
-    
     return tensor
 
-def bce_loss(input, target):
-    """
-    Numerically stable version of the binary cross-entropy loss function.
-
-    As per https://github.com/pytorch/pytorch/issues/751
-    See the TensorFlow docs for a derivation of this formula:
-    https://www.tensorflow.org/api_docs/python/tf/nn/sigmoid_cross_entropy_with_logits
-
-    Inputs:
-    - input: PyTorch Tensor of shape (N, ) giving scores.
-    - target: PyTorch Tensor of shape (N,) containing 0 and 1 giving targets.
-
-    Returns:
-    - A PyTorch Tensor containing the mean BCE loss over the minibatch of input data.
-    """
-    neg_abs = - input.abs()
-    loss = input.clamp(min=0) - input * target + (1 + neg_abs.exp()).log()
-    return loss.mean()
-
-def discriminator_loss(logits_real, logits_fake):
-    """
-    Computes the discriminator loss described above.
-    
-    Inputs:
-    - logits_real: PyTorch Tensor of shape (N,) giving scores for the real data.
-    - logits_fake: PyTorch Tensor of shape (N,) giving scores for the fake data.
-    
-    Returns:
-    - loss: PyTorch Tensor containing (scalar) the loss for the discriminator.
-    """
-    loss = None
-    # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-
-    fake_labels = torch.zeros(logits_fake.shape).type(dtype)
-    loss = bce_loss(logits_fake, fake_labels)
-
-    true_labels = torch.ones(logits_real.shape).type(dtype)
-    loss += bce_loss(logits_real, true_labels)
-    
-    # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-    return loss
-
-def generator_loss(logits_fake):
-    """
-    Computes the generator loss described above.
-
-    Inputs:
-    - logits_fake: PyTorch Tensor of shape (N,) giving scores for the fake data.
-    
-    Returns:
-    - loss: PyTorch Tensor containing the (scalar) loss for the generator.
-    """
-    loss = None
-    # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-
-    true_labels = torch.ones(logits_fake.shape).type(dtype)
-    loss = bce_loss(logits_fake, true_labels)
-
-    # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-    return loss
-
 def get_optimizer(model, lr=0.0002):
-    """
-    Construct and return an Adam optimizer for the model with learning rate 1e-3,
-    beta1=0.5, and beta2=0.999.
-    
-    Input:
-    - model: A PyTorch model that we want to optimize.
-    
-    Returns:
-    - An Adam optimizer for the model with the desired hyperparameters.
-    """
-    optimizer = None
-    # *****START OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-    
     optimizer = optim.Adam(model.parameters(), lr=lr, betas=(0.5, 0.999))
-
-    # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
     return optimizer
 
 def build_dc_classifier(batch_size):
-    """
-    Build and return a PyTorch model for the DCGAN discriminator implementing
-    the architecture above.
-    """
 
     model = nn.Sequential(
             nn.Conv2d(3, 64, 4, 2, 1, bias=False),
@@ -142,17 +70,8 @@ def build_dc_classifier(batch_size):
     
     return model
 
-    # *****END OF YOUR CODE (DO NOT DELETE/MODIFY THIS LINE)*****
-    ##############################################################################
-    #                               END OF YOUR CODE                             #
-    ##############################################################################
-
 def build_dc_generator(noise_dim=NOISE_DIM):
-    """
-    Build and return a PyTorch model implementing the DCGAN generator using
-    the architecture described above.
-    """
-
+    
     model = nn.Sequential(
             nn.ConvTranspose2d(noise_dim, 512, 4, 1, 0, bias=False),
             nn.BatchNorm2d(512),
@@ -169,13 +88,57 @@ def build_dc_generator(noise_dim=NOISE_DIM):
             nn.ConvTranspose2d(64, 3, 4, 2, 1, bias=False),
             nn.Tanh(),
         )
-    
-#     print(model)
-    
+        
     return model
 
-def run_a_gan(D, G, D_solver, G_solver, discriminator_loss, generator_loss, loader_train, show_every=50, 
-              batch_size=128, noise_size=96, num_epochs=10):
+def bce_loss(output, target):
+    neg_abs = - output.abs()
+    loss = output.clamp(min=0) - output * target + (1 + neg_abs.exp()).log()
+    
+    return loss.mean()
+
+def discriminator_loss(logits_real, logits_fake):
+    
+    fake_labels = torch.zeros(logits_fake.shape).type(dtype) * (1-0.1)
+    loss = bce_loss(logits_fake, fake_labels)
+
+    true_labels = torch.ones(logits_real.shape).type(dtype) * (1-0.1)
+    loss += bce_loss(logits_real, true_labels)
+    
+    return loss
+
+def generator_loss(logits_fake):
+    true_labels = torch.ones(logits_fake.shape).type(dtype)
+    loss = bce_loss(logits_fake, true_labels)
+
+    return loss
+
+def show_images(images, numItr="test", out="./out/"):
+    images = torch.reshape(images, [images.shape[0], -1])  # images reshape to (batch_size, D)
+    unorm = UnNormalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
+    
+    for i, img in enumerate(images):
+        img = img.reshape(3, 64, 64)
+        img = unorm(img).detach().numpy()
+        img = np.moveaxis(img, 0, -1)
+
+        img = ((images - images.min()) * 255) / (images.max() - images.min())
+        img = img.numpy()
+
+        plt.imsave("output/" + str(numItr) + "_" + str(i) + ".jpg", img.astype(np.uint8))
+
+    return 
+
+def show_grid(img, i):
+    unorm = UnNormalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
+    img = unorm(img)
+    npimg = img.detach().numpy()
+    npimg *= 255
+    plt.imsave("grid/" + str(i) + ".png", np.transpose(npimg, (1,2,0)).astype(np.uint8))
+
+
+def run_a_gan(D, G, D_solver, G_solver, discriminator_loss, generator_loss, loader_train, show_every=1000, 
+              batch_size=250, noise_size=96, num_epochs=100):
     """
     Train a GAN!
     
@@ -190,102 +153,85 @@ def run_a_gan(D, G, D_solver, G_solver, discriminator_loss, generator_loss, load
     - noise_size: Dimension of the noise to use as input to the generator.
     - num_epochs: Number of epochs over the training dataset to use for training.
     """
+    
+    
+    D.train()
+    G.train()
+    
     images = []
     iter_count = 0
     
     D_losses = []
     G_losses = []
     
-    fixed_noise = torch.randn(64, noise_size, 1, 1, device=device)
-    
+    wandb.watch(D, log="all")
+    wandb.watch(G, log="all")
+               
     for epoch in range(num_epochs):
-        for i, x in enumerate(loader_train, 0):
+        
+        if epoch % 5 == 0:
+            
+            torch.save(D.state_dict(), "./d_model.h5")
+            torch.save(G.state_dict(), "./g_model.h5")
+            wandb.save('d_model.h5')
+            wandb.save('d_model.h5')
+        
+        for i, (x, y) in enumerate(loader_train, 0):
             if len(x) != batch_size:
                 continue
-            
+                
             # Establish convention for real and fake labels during training
             real_label = 1.
             fake_label = 0. 
             smooth  = 0.1
             
             # Train discriminator with real images
-            D.zero_grad()
-
-            real_cpu = x.to(device).type(dtype)
-            b_size = real_cpu.size(0)
-            label = torch.full((batch_size,), real_label, dtype=torch.float, device=device) * (1-smooth)
-            
-            output_real = D(real_cpu).view(-1)
-            error_real = nn.BCELoss()(output_real, label)
-            error_real.backward()
-            D_x = output_real.mean().item()
-            
+            D_solver.zero_grad()
+            real_data = x.to(device).type(dtype)
+            output_real = D(real_data).view(-1)
+                       
             # Train discriminator with fake images
+            g_fake_seed = sample_noise(batch_size, noise_size).type(dtype)
+            fake_images = G(g_fake_seed).detach()
+            output_fake = D(fake_images)
             
-            noise = sample_noise(batch_size, noise_size)
-            fake = G(noise)
-            label.fill_(fake_label  * (1-smooth))
-            output_fake = D(fake.detach()).view(-1)
-            
-            error_fake = nn.BCELoss()(output_fake, label)
-            error_fake.backward()
-            D_G_1 = error_fake.mean().item
-            
-            errorD = error_real + error_fake
+            d_error = discriminator_loss(output_real, output_fake)
+            d_error.backward()
             D_solver.step()
             
-            # Train GAN
+            # Train Generator
             
-            D.zero_grad()
-            label.fill_(real_label)
-            output_g = D(fake).view(-1)
-            errorG = nn.BCELoss()(output_g, label)
-            errorG.backward()
-            D_G_2 = errorG.mean().item()
-            G_solver.step()            
+            G_solver.zero_grad()
+            g_fake_seed = sample_noise(batch_size, noise_size).type(dtype)
+            fake_images = G(g_fake_seed)
             
+            gen_logits_fake = D(fake_images)
+            g_error = generator_loss(gen_logits_fake)
+            g_error.backward()
+            G_solver.step()
             
-
             if (iter_count % show_every == 0):
-                print('Iter: {}, D: {:.4}, G:{:.4}'.format(iter_count,errorD.item(),errorG.item()))
-                imgs_numpy = G(fixed_noise).detach().cpu().numpy()
-                images.append(imgs_numpy[0:16])
                 
-#                 sqrtn = int(np.ceil(np.sqrt(imgs_numpy[0].shape[0])))
-#                 sqrtimg = int(np.ceil(np.sqrt(imgs_numpy[0].shape[1])))
-              
-#                 img = imgs_numpy[0].reshape(3, 64, 64)
-#                 img = np.moveaxis(img, 0, -1)
+                fixed_noise = torch.randn(64, noise_size, 1, 1, device=device)
                 
-#                 plt.imshow(img)
-#                 plt.show()
-
+                print('Iter: {}, D: {:.4}, G:{:.4}'.format(iter_count, d_error.item(), g_error.item()))
+                show_images(fake_images[0:16].cpu(), iter_count)
+                
+                images = vutils.make_grid(fake_images[0:16].cpu(), padding=2, normalize=True)
+                show_grid(images, iter_count)
+                
+#                 plot_grad_flow(G.named_parameters(), "gen_" + str(iter_count))
+#                 plot_grad_flow(D.named_parameters(), "disc_" + str(iter_count))
+                
             iter_count += 1
+        
+            wandb.log({"G_Loss": g_error.item()})
+            wandb.log({"D_Loss": d_error.item()})
                         
-            G_losses.append(errorG.item())
-            D_losses.append(errorD.item())
-
+            G_losses.append(g_error.item())
+            D_losses.append(d_error.item())
     
-    return images, G_losses, D_losses
-
-
-
-class ChunkSampler(sampler.Sampler):
-    """Samples elements sequentially from some offset. 
-    Arguments:
-        num_samples: # of desired datapoints
-        start: offset where we should start selecting from
-    """
-    def __init__(self, num_samples, start=0):
-        self.num_samples = num_samples
-        self.start = start
-
-    def __iter__(self):
-        return iter(range(self.start, self.start + self.num_samples))
-
-    def __len__(self):
-        return self.num_samples
-
+    return [images], G_losses, D_losses
 
 class Flatten(nn.Module):
     def forward(self, x):
@@ -313,17 +259,3 @@ def initialize_weights(m):
 #         nn.init.constant_(m.bias.data, 0)
     elif isinstance(m, nn.Conv2d):
         nn.init.normal_(m.weight.data, 0.0, 0.02) 
-
-def preprocess_img(x):
-    return 2 * x - 1.0
-
-def deprocess_img(x):
-    return (x + 1.0) / 2.0
-
-def rel_error(x,y):
-    return np.max(np.abs(x - y) / (np.maximum(1e-8, np.abs(x) + np.abs(y))))
-
-def count_params(model):
-    """Count the number of parameters in the current TensorFlow graph """
-    param_count = np.sum([np.prod(p.size()) for p in model.parameters()])
-    return param_count
