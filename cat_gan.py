@@ -103,7 +103,7 @@ if __name__ == "__main__":
 
     print("Starting training now")
 
-    images, G_losses, D_losses = run_a_gan(D_DC, G_DC, D_DC_solver, G_DC_solver, discriminator_loss, generator_loss, loader_train, batch_size=config.batch_size, noise_size=config.NOISE_DIM, num_epochs=config.epochs)
+    images, G_losses, D_losses = run_a_gan(D_DC, G_DC, D_DC_solver, G_DC_solver, discriminator_loss, generator_loss, loader_train, batch_size=config.batch_size, show_every=10000, noise_size=config.NOISE_DIM, num_epochs=4000)
 
     torch.save(D_DC.state_dict(), "./d_model.h5")
     torch.save(G_DC.state_dict(), "./g_model.h5")

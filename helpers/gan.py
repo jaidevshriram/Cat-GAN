@@ -122,8 +122,7 @@ def show_images(images, numItr="test", out="./out/"):
         img = unorm(img).detach().numpy()
         img = np.moveaxis(img, 0, -1)
 
-        img = ((images - images.min()) * 255) / (images.max() - images.min())
-        img = img.numpy()
+        img = ((img - img.min()) * 255) / (img.max() - img.min())
 
         plt.imsave("output/" + str(numItr) + "_" + str(i) + ".jpg", img.astype(np.uint8))
 
@@ -169,13 +168,18 @@ def run_a_gan(D, G, D_solver, G_solver, discriminator_loss, generator_loss, load
                
     for epoch in range(num_epochs):
         
-        if epoch % 5 == 0:
+        if epoch % 10 == 0:
             
-            torch.save(D.state_dict(), "./d_model.h5")
-            torch.save(G.state_dict(), "./g_model.h5")
-            wandb.save('d_model.h5')
-            wandb.save('d_model.h5')
-        
+            torch.save({
+                        "epoch": epoch,
+                        "D_state_dict": D.state_dict(),
+                        "G_state_dict": G.state_dict(),
+                        "D_optimizer_state_dict": D_solver.state_dict(),
+                        "G_optimizer_state_dict": G_solver.state.dict(),
+                        "G_loss" : G_losses,
+                        "D_loss": D_losses,
+                        },"./d_model.h5")
+                    
         for i, (x, y) in enumerate(loader_train, 0):
             if len(x) != batch_size:
                 continue
@@ -214,7 +218,7 @@ def run_a_gan(D, G, D_solver, G_solver, discriminator_loss, generator_loss, load
                 
                 fixed_noise = torch.randn(64, noise_size, 1, 1, device=device)
                 
-                print('Iter: {}, D: {:.4}, G:{:.4}'.format(iter_count, d_error.item(), g_error.item()))
+                print('Epoch [{}/{}], Iter: {}, D: {:.6}, G:{:.6}'.format(epoch, num_epochs, iter_count, d_error.item(), g_error.item()))
                 show_images(fake_images[0:16].cpu(), iter_count)
                 
                 images = vutils.make_grid(fake_images[0:16].cpu(), padding=2, normalize=True)
@@ -225,8 +229,8 @@ def run_a_gan(D, G, D_solver, G_solver, discriminator_loss, generator_loss, load
                 
             iter_count += 1
         
-            wandb.log({"G_Loss": g_error.item()})
-            wandb.log({"D_Loss": d_error.item()})
+            wandb.log({"G_Loss": g_error.item(), "epoch": epoch})
+            wandb.log({"D_Loss": d_error.item(), "epoch": epoch})
                         
             G_losses.append(g_error.item())
             D_losses.append(d_error.item())
