@@ -64,6 +64,10 @@ Visualizing the initial outputs of the GAN showed the importance of good initial
 
 I tried working with other variations such as InfoGAN which has a fully connected layer as well - though the gradient flow seemed poor here. To be fair, I probably chose some hyperparameters poorly then.
 
+# Favourite Cat
+
+![Look at this!](output/20000_15.jpg)
+
 # Acknowledgements
 
-This project was bootstrapped from a MNIST GAN assignment in [cs231n](cs231n.github.io). The structure of the code helped greatly.
+This project was bootstrapped from a MNIST GAN assignment in [cs231n](https://cs231n.github.io/). The structure of the code helped greatly.
