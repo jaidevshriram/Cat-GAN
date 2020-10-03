@@ -15,12 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
 from helpers.gan import get_optimizer, run_a_gan, initialize_weights
-from helpers.gan import bce_loss, discriminator_loss, generator_loss
 from helpers.gan import build_dc_classifier, build_dc_generator
-
-import logging
-logging.propagate = False 
-logging.getLogger().setLevel(logging.ERROR)
 
 # WandB – Import the wandb library
 import wandb
@@ -38,9 +33,7 @@ config.NUM_VAL = 3000
 config.NOISE_DIM = 100
 config.batch_size = 128
 
-ngpu = 1
-
-dtype = torch.cuda.FloatTensor ## UNCOMMENT THIS LINE IF YOU'RE ON A GPU!
+dtype = torch.cuda.FloatTensor
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 
 class UnNormalize(object):
@@ -68,7 +61,7 @@ def show_images(images, numItr="test", out="./out/"):
         img = img.reshape(3, 64, 64)
         img = unorm(img).numpy()
         img = np.moveaxis(img, 0, -1)
-        img *= 255
+        img = ((img - img.min()) * 255) / (img.max() - img.min())
         plt.imsave("output/" + str(numItr) + "_" + str(i) + ".png", img.astype(np.uint8))
     return 
 
@@ -83,32 +76,15 @@ if __name__ == "__main__":
                                 ))
 
     loader_train = DataLoader(cat_train, batch_size=config.batch_size,
-                              shuffle=True, pin_memory=True)
+                              shuffle=True, pin_memory=True, num_workers=2)
 
-#     imgs = loader_train.__iter__().next()[0].view(config.batch_size, 3, 4096).squeeze()
-#     show_images(imgs)
+    imgs = loader_train.__iter__().next()[0].view(config.batch_size, 3, 4096).squeeze()
+    show_images(imgs)
     
-    D_DC = build_dc_classifier(config.batch_size).type(dtype) 
-    D_DC.apply(initialize_weights)
-    G_DC = build_dc_generator(config.NOISE_DIM).type(dtype)
-    G_DC.apply(initialize_weights)
-
-    # Handle multi-gpu if desired
-    if (device.type == 'cuda') and (ngpu > 1):
-        G_DC = nn.DataParallel(G_DC, list(range(ngpu)))
-        D_DC = nn.DataParallel(D_DC, list(range(ngpu)))
-
-    D_DC_solver = get_optimizer(D_DC, 0.00005)
-    G_DC_solver = get_optimizer(G_DC, 0.0002)
-
     print("Starting training now")
+    
+    images, G_losses, D_losses = run_a_gan(loader_train, batch_size=config.batch_size, show_every=10000, noise_size=config.NOISE_DIM, num_epochs=4000)
 
-    images, G_losses, D_losses = run_a_gan(D_DC, G_DC, D_DC_solver, G_DC_solver, discriminator_loss, generator_loss, loader_train, batch_size=config.batch_size, show_every=10000, noise_size=config.NOISE_DIM, num_epochs=4000)
-
-    torch.save(D_DC.state_dict(), "./d_model.h5")
-    torch.save(G_DC.state_dict(), "./g_model.h5")
-    wandb.save('d_model.h5')
-    wandb.save('d_model.h5')
 
     plt.figure(figsize=(10,5))
     plt.title("Generator and Discriminator Loss During Training")

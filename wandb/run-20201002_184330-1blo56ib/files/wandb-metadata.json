@@ -1,0 +1,24 @@
+{
+    "os": "Windows-10-10.0.19041-SP0",
+    "python": "3.8.3",
+    "heartbeatAt": "2020-10-02T13:13:34.397721",
+    "startedAt": "2020-10-02T13:13:30.373863",
+    "docker": null,
+    "gpu": "GeForce GTX 1050 Ti with Max-Q Design",
+    "gpu_count": 1,
+    "cpu_count": 12,
+    "cuda": null,
+    "args": [],
+    "state": "running",
+    "codePath": "cat_gan.py",
+    "program": "cat_gan.py",
+    "git": {
+        "remote": "git@github.com:jaidevshriram/Cat-GAN.git",
+        "commit": "5696dc8aa1e824446baed33448d39bedb86a6dcb"
+    },
+    "email": null,
+    "root": "C:/Users/jaide/Desktop/GIT-Projects/Cat-GAN",
+    "host": "Drachenstein",
+    "username": "jaide",
+    "executable": "C:\\Users\\jaide\\miniconda3\\python.exe"
+}
