@@ -63,3 +63,7 @@ Visualizing the initial outputs of the GAN showed the importance of good initial
 ## Other Architectures
 
 I tried working with other variations such as InfoGAN which has a fully connected layer as well - though the gradient flow seemed poor here. To be fair, I probably chose some hyperparameters poorly then.
+
+# Acknowledgements
+
+This project was bootstrapped from a MNIST GAN assignment in [cs231n](cs231n.github.io). The structure of the code helped greatly.
